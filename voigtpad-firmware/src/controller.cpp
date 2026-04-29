@@ -264,22 +264,6 @@ constexpr uint8_t kArcLeds    = 13;
 constexpr float   kArcStartH  = 7.5f;
 constexpr float   kArcStepH   = 0.75f;
 
-inline float ValueToHour(float v)
-{
-    if (v < 0.0f) v = 0.0f;
-    if (v > 1.0f) v = 1.0f;
-    constexpr float kSpan = static_cast<float>(kArcLeds - 1) * kArcStepH;
-    return kArcStartH + v * kSpan;
-}
-
-inline uint8_t ValueToFillSteps(float v)
-{
-    if (v < 0.0f) v = 0.0f;
-    if (v > 1.0f) v = 1.0f;
-    const uint8_t lit = static_cast<uint8_t>(v * static_cast<float>(kArcLeds) + 0.5f);
-    return lit;
-}
-
 inline LedPanel::Rgb ScaleGlobal(const LedPanel::Rgb& c)
 {
     return LedPanel::Scale(c, kGlobalBrightness);
@@ -345,41 +329,65 @@ inline LedPanel::Rgb VuColorAt(float fraction)
 
 /* ── Per-pot draw helpers ───────────────────────────────────────── */
 
+/* Anti-aliased fill coverage for arc step `step` given a fractional
+ * fill of `fill_f` (in LED units).  The leading edge gets partial
+ * brightness so values between LED steps render as a continuous
+ * sweep instead of a chunky on/off boundary.                        */
+inline float ArcStepCoverage(uint8_t step, float fill_f)
+{
+    const float k = fill_f - static_cast<float>(step);
+    if (k <= 0.0f) return 0.0f;
+    if (k >= 1.0f) return 1.0f;
+    return k;
+}
+
 void Controller::DrawArc(uint8_t pot, float value, LedPanel::Rgb color,
                          float k_pot)
 {
+    /* Off-state floor: a barely-visible glow so the ring outline is
+     * always readable.                                               */
     constexpr LedPanel::Rgb kArcOff = {0x06, 0x06, 0x06};
-    const uint8_t fill = ValueToFillSteps(value);
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    const float fill_f = value * static_cast<float>(kArcLeds);
+
     for (uint8_t step = 0; step < kArcLeds; step++)
     {
-        const float   hour = kArcStartH + step * kArcStepH;
-        const uint8_t off  = LedPanel::RingOffsetForHour(pot, hour);
-        const LedPanel::Rgb c =
-            (step < fill)
-                ? LedPanel::Scale(color, k_pot)
-                : kArcOff;
+        const float   hour  = kArcStartH + step * kArcStepH;
+        const uint8_t off   = LedPanel::RingOffsetForHour(pot, hour);
+        const float   cov   = ArcStepCoverage(step, fill_f);
+        /* Crossfade between the dim background and the lit colour
+         * based on coverage.  This anti-aliases the leading edge.  */
+        const LedPanel::Rgb c = LedPanel::Mix(
+            kArcOff,
+            LedPanel::Scale(color, k_pot),
+            cov);
         LedPanel::SetRingByOffset(pot, off, ScaleGlobal(c));
     }
 }
 
 void Controller::DrawVu(uint8_t pot, float level, float k_pot)
 {
-    /* Map the band's audible level (0..~1.2 with headroom) onto the
-     * 13-LED arc.  Below-threshold LEDs sit at a low "off" colour so
-     * the arc shape itself communicates "this is a meter".            */
+    /* Map the band's audible level (0..~1 with headroom) onto the
+     * 13-LED arc.  Below-threshold LEDs sit at a low "off" colour
+     * so the arc shape itself communicates "this is a meter".  The
+     * leading edge crossfades for a continuous look — without it
+     * the meter visibly chunks LED-by-LED on small modulations.   */
     constexpr LedPanel::Rgb kArcOff = {0x04, 0x06, 0x04};
-    const float    norm = level / 1.0f;          /* 1.0 ≈ full clip   */
-    const uint8_t  fill = ValueToFillSteps(norm);
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
+    const float fill_f = level * static_cast<float>(kArcLeds);
+
     for (uint8_t step = 0; step < kArcLeds; step++)
     {
         const float   hour    = kArcStartH + step * kArcStepH;
         const uint8_t off     = LedPanel::RingOffsetForHour(pot, hour);
         const float   step_fr = static_cast<float>(step + 1)
                               / static_cast<float>(kArcLeds);
-        const LedPanel::Rgb c =
-            (step < fill)
-                ? LedPanel::Scale(VuColorAt(step_fr), k_pot)
-                : kArcOff;
+        const float   cov     = ArcStepCoverage(step, fill_f);
+        const LedPanel::Rgb lit =
+            LedPanel::Scale(VuColorAt(step_fr), k_pot);
+        const LedPanel::Rgb c = LedPanel::Mix(kArcOff, lit, cov);
         LedPanel::SetRingByOffset(pot, off, ScaleGlobal(c));
     }
 }
@@ -430,10 +438,7 @@ void Controller::DrawOctave(uint8_t pot, uint8_t selected, float k_pot)
 void Controller::DrawDriftPip(uint8_t pot, float drift_phase, float k_pot)
 {
     /* Background: very dim full ring so the pot ring is recognisable
-     * even when the pip is on the far side.  Foreground: a single
-     * bright pixel chasing the LFO phase, with the two neighbours
-     * dimmed for a small "comet tail" — easier to track at slow
-     * drift rates than a single dot. */
+     * even when the pip is at an extreme.                            */
     constexpr LedPanel::Rgb kBg   = {0x02, 0x05, 0x02};
     constexpr LedPanel::Rgb kPip  = {0x40, 0xFF, 0x80};
 
@@ -444,32 +449,47 @@ void Controller::DrawDriftPip(uint8_t pot, float drift_phase, float k_pot)
         LedPanel::SetRingByOffset(pot, off, ScaleGlobal(kBg));
     }
 
-    /* Map [0,1) phase onto the 13-LED arc and draw a two-tap
-     * interpolated pip — at sub-LED phases the brightest light sits
-     * between two adjacent LEDs, so the motion looks smooth even at
-     * fast drift rates.                                              */
+    /* The shimmer-drift modulator is a sine, not a sawtooth.  Map
+     * the engine phase (0..1) through sin(2π·phase) ∈ [-1, +1] so the
+     * pip *swings*: clockwise while the LFO value is rising (drift
+     * is sweeping pitch up), counter-clockwise while falling.  Speed
+     * of the swing matches the audible drift rate; direction always
+     * matches the sign of the LFO derivative.                        */
     if (drift_phase < 0.0f) drift_phase = 0.0f;
     if (drift_phase >= 1.0f) drift_phase -= std::floor(drift_phase);
 
-    const float   center_f = drift_phase * static_cast<float>(kArcLeds);
-    const int     center_i = static_cast<int>(center_f);
-    const float   frac     = center_f - static_cast<float>(center_i);
+    const float    s        = std::sin(6.2831853f * drift_phase);
+    /* Map [-1, +1] to position [0, kArcLeds-1] — centre rest at the
+     * middle LED, full deflection reaches the ends symmetrically.  */
+    const float    center_f = (s * 0.5f + 0.5f)
+                             * static_cast<float>(kArcLeds - 1);
+    const int      center_i = static_cast<int>(std::floor(center_f));
+    const float    frac     = center_f - static_cast<float>(center_i);
 
     auto setStep = [&](int step, float k) {
         if (step < 0 || step >= kArcLeds) return;
         const float   hour = kArcStartH + step * kArcStepH;
         const uint8_t off  = LedPanel::RingOffsetForHour(pot, hour);
         const LedPanel::Rgb c = LedPanel::Scale(kPip, k * k_pot);
-        LedPanel::SetRingByOffset(pot, off, ScaleGlobal(c));
+        /* Brighten on top of the background: add the pip pixel,
+         * blending so the off-ring tint at the pip location stays
+         * visible at sub-LED brightness.                            */
+        LedPanel::SetRingByOffset(
+            pot, off,
+            ScaleGlobal(LedPanel::Mix(kBg, c, k)));
     };
 
-    const int s0 = center_i;
-    const int s1 = center_i + 1;
-    setStep(s0, 1.0f - frac);
-    setStep(s1, frac);
-    /* Soft tails one step further out — eases the motion. */
-    if (s0 - 1 >= 0)         setStep(s0 - 1, 0.20f * (1.0f - frac));
-    if (s1 + 1 <  kArcLeds)  setStep(s1 + 1, 0.20f * frac);
+    /* Two-tap interpolated pip — at sub-LED phases the brightest
+     * light sits between two adjacent LEDs, so the swing looks
+     * smooth instead of stepping LED-to-LED.                       */
+    setStep(center_i,     1.0f - frac);
+    setStep(center_i + 1, frac);
+    /* Soft tails one step further out — anti-aliases the comet at
+     * fast swing speeds.                                            */
+    if (center_i - 1 >= 0)
+        setStep(center_i - 1, 0.20f * (1.0f - frac));
+    if (center_i + 2 <  kArcLeds)
+        setStep(center_i + 2, 0.20f * frac);
 }
 
 void Controller::DrawSparkle(uint8_t pot, float air_param,
@@ -584,6 +604,29 @@ void Controller::Render(uint32_t t_ms,
         : (t_ms - last_render_ms_);
     last_render_ms_ = t_ms;
 
+    /* UI-side smoothing for V/U meters.  The engine already runs a
+     * per-block peak follower (~100 ms TC); we add a lighter UI-side
+     * exponential follower so individual frames don't visibly chunk
+     * the leading-edge LED.  Asymmetric:
+     *   • attack — fast (k_up ≈ 0.55) so transients still pop.
+     *   • release — slow (k_dn ≈ 0.18) so the bar settles smoothly.
+     * Coefficients are time-step-normalised against a 16 ms (60 Hz)
+     * reference frame so render-rate jitter doesn't change the feel.
+     */
+    const float dt_norm = static_cast<float>(dt_ms) / 16.0f;
+    auto smooth = [dt_norm](float& disp, float target) {
+        const float k = (target > disp) ? 0.55f : 0.18f;
+        const float a = 1.0f - std::pow(1.0f - k, dt_norm);
+        disp += a * (target - disp);
+        if (disp < 0.0f) disp = 0.0f;
+    };
+    if (engine_)
+    {
+        smooth(vu_disp_main_, engine_->MainPeak());
+        smooth(vu_disp_shmr_, engine_->ShimmerPeak());
+        smooth(vu_disp_sub_,  engine_->SubPeak());
+    }
+
     /* Breathing modulator for the deferred-apply indicator.        */
     constexpr float kBreatheHz = 1.0f / 1.5f;
     const float     breathe    = 0.65f
@@ -610,19 +653,16 @@ void Controller::Render(uint32_t t_ms,
             switch (p)
             {
                 case 0: DrawArc(p, s.stored, kP1RootCol, k_pot);           break;
-                case 1: DrawVu(p, engine_ ? engine_->ShimmerPeak() : 0.0f,
-                               k_pot);                                     break;
+                case 1: DrawVu(p, vu_disp_shmr_, k_pot);                   break;
                 case 2: DrawArc(p, s.stored, kP1DetuneCol, k_pot);         break;
-                case 3: DrawVu(p, engine_ ? engine_->MainPeak() : 0.0f,
-                               k_pot);                                     break;
+                case 3: DrawVu(p, vu_disp_main_, k_pot);                   break;
                 case 4: DrawChord(p,
                             static_cast<uint8_t>(std::min<int>(
                                 kPage1Discrete.num_options - 1,
                                 static_cast<int>(s.stored
                                     * kPage1Discrete.num_options))),
                             k_pot);                                        break;
-                case 5: DrawVu(p, engine_ ? engine_->SubPeak() : 0.0f,
-                               k_pot);                                     break;
+                case 5: DrawVu(p, vu_disp_sub_, k_pot);                    break;
                 default: break;
             }
         }
@@ -651,11 +691,28 @@ void Controller::Render(uint32_t t_ms,
          * highlighted band already conveys the stored value).        */
         if (!s.caught && num_opts == 0)
         {
-            const float   pip_hour = ValueToHour(s.stored);
-            const uint8_t pip_off  = LedPanel::RingOffsetForHour(p, pip_hour);
-            LedPanel::Rgb pip = kPipWhite;
-            if (defer_active_) pip = LedPanel::Scale(pip, breathe);
-            LedPanel::SetRingByOffset(p, pip_off, ScaleGlobal(pip));
+            /* Sub-pixel pip — the stored value rarely sits exactly
+             * on an LED, so split the pip across the two adjacent
+             * LEDs with weights that sum to 1.  This makes the pip
+             * appear to glide as the value changes instead of
+             * stepping LED-to-LED.                                 */
+            float v = s.stored;
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            const float step_f = v * static_cast<float>(kArcLeds - 1);
+            const int   step_i = static_cast<int>(std::floor(step_f));
+            const float frac   = step_f - static_cast<float>(step_i);
+
+            auto setPip = [&](int step, float k) {
+                if (step < 0 || step >= kArcLeds || k <= 0.0f) return;
+                const float   hour = kArcStartH + step * kArcStepH;
+                const uint8_t off  = LedPanel::RingOffsetForHour(p, hour);
+                LedPanel::Rgb pip = LedPanel::Scale(kPipWhite, k);
+                if (defer_active_) pip = LedPanel::Scale(pip, breathe);
+                LedPanel::SetRingByOffset(p, off, ScaleGlobal(pip));
+            };
+            setPip(step_i,     1.0f - frac);
+            setPip(step_i + 1, frac);
         }
     }
 

@@ -118,6 +118,14 @@ class Controller
     uint32_t                sparkle_rng_              = 0xCAFEBABEu;
     /* Sparkle intensity per arc step (0..1) — ages out per frame. */
     float                   sparkle_intensity_[13]    = {0.0f};
+    /* Smoothed displayed levels for the three V/U meters
+     * (main / shimmer / sub).  An exponential follower applied here
+     * on top of the engine's per-block envelope removes single-frame
+     * flicker without blunting the response.  Order matches the
+     * audio band, not the pot index.                                */
+    float                   vu_disp_main_             = 0.0f;
+    float                   vu_disp_shmr_             = 0.0f;
+    float                   vu_disp_sub_              = 0.0f;
 
     /* Push the current stored values into the audio engine. */
     void PushParamsToEngine();
