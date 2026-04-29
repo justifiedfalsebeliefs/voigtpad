@@ -416,12 +416,13 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
 
     /* Fog cutoff is modulated by the *primary* shimmer-drift LFO
      * (drift_lfo[0] ∈ [-1, +1]) scaled by the user-set depth.  At
-     * full depth the cutoff sweeps ±60% around the user's centre
-     * frequency; at zero depth the filter is static.  Using the
-     * same LFO that drives shimmer detune means the audible
-     * filter sweep is locked to the shimmer wobble, and the UI
-     * pip on the drift pot is guaranteed to track both.            */
-    const float fog_mod = drift_lfo[0] * fog_mod_depth_ * 0.6f;
+     * full depth the cutoff sweeps ±180% around the user's centre
+     * frequency (clamped to a sane band by the limits below); at
+     * zero depth the filter is static.  Using the same LFO that
+     * drives shimmer detune means the audible filter sweep is
+     * locked to the shimmer wobble, and the UI pip on the drift
+     * pot is guaranteed to track both.                            */
+    const float fog_mod = drift_lfo[0] * fog_mod_depth_ * 1.8f;
     float fog_f = fog_cutoff_ * (1.0f + fog_mod);
     if (fog_f < 60.0f)               fog_f = 60.0f;
     if (fog_f > kSampleRate / 2.2f)  fog_f = kSampleRate / 2.2f;

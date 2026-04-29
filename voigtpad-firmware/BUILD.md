@@ -103,8 +103,8 @@ Chord options (in order): `min`, `maj`, `min7`, `sus2`, `sus4`.
 | P6  | Fog mod depth         | 0.4     | 0     | 1    |
 
 The fog cutoff is modulated by the shimmer-drift LFO; P6 sets how
-much. At full depth the cutoff sweeps ±60% of the P4 centre value
-at the rate set by P1.
+much. At full depth the cutoff sweeps ±180% of the P4 centre value
+(clamped to the engine's safe band) at the rate set by P1.
 
 ### Always-on static parameters (not user-exposed)
 * Stereo spread = 1.0
