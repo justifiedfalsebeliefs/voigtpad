@@ -111,11 +111,32 @@ class Controller
     /* Last physical pot reading (kept for renderer). */
     float                   last_phys_[NUM_POTS] = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
 
+    /* ── Render-side animation state ─────────────────────────────
+     * All animation state lives on the UI thread (Render is the only
+     * writer), so no synchronisation is needed.                    */
+    uint32_t                last_render_ms_           = 0;
+    uint32_t                sparkle_rng_              = 0xCAFEBABEu;
+    /* Sparkle intensity per arc step (0..1) — ages out per frame. */
+    float                   sparkle_intensity_[13]    = {0.0f};
+
     /* Push the current stored values into the audio engine. */
     void PushParamsToEngine();
 
     /* Update pot-catch state for one pot on the current page. */
     void UpdateCatch(uint8_t pot_idx, float phys);
+
+    /* Per-pot draw helpers — one per animation type.  All operate
+     * on the panel's WS2812 buffer; LedPanel::Show() is called by
+     * the caller after a full panel paint.                         */
+    void DrawArc        (uint8_t pot, float value, LedPanel::Rgb color,
+                         float k_pot);
+    void DrawWarmthArc  (uint8_t pot, float value, float k_pot);
+    void DrawVu         (uint8_t pot, float level, float k_pot);
+    void DrawChord      (uint8_t pot, uint8_t selected, float k_pot);
+    void DrawOctave     (uint8_t pot, uint8_t selected, float k_pot);
+    void DrawDriftPip   (uint8_t pot, float drift_phase, float k_pot);
+    void DrawSparkle    (uint8_t pot, float air_param,
+                         uint32_t dt_ms, float k_pot);
 
     /* Page-1 mappers (norm 0..1 → engine units). */
     static float RootMidiFromNorm(float v);

@@ -505,6 +505,13 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
 
     float subp0 = sub_ph_[0], subp1 = sub_ph_[1], subp2 = sub_ph_[2];
 
+    /* Per-block peak accumulators — each band tracks max-abs across
+     * the whole block.  Cheap (one cmp + abs per sample); the full
+     * envelope-follower decay only runs once at end-of-block.        */
+    float main_max = 0.0f;
+    float sub_max  = 0.0f;
+    float shmr_max = 0.0f;
+
     /* Per-sample work. */
     for (std::size_t i = 0; i < n; i++)
     {
@@ -552,6 +559,14 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
         chord_l = BiquadTick(s_chord_lpf, chord_lpf_z_[0], chord_l);
         chord_r = BiquadTick(s_chord_lpf, chord_lpf_z_[1], chord_r);
 
+        /* Track the chord/main band peak for the UI VU meter. */
+        {
+            const float al = std::fabs(chord_l);
+            const float ar = std::fabs(chord_r);
+            const float a  = al > ar ? al : ar;
+            if (a > main_max) main_max = a;
+        }
+
         /* ── SUB ── */
         const float subTone =
               SinNorm(subp0)
@@ -572,6 +587,10 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
         sub_lfo_ph += sub_lfo_inc; if (sub_lfo_ph >= 1.0f) sub_lfo_ph -= 1.0f;
 
         const float sub_mono = subSat * subEnv * sub_level;
+        {
+            const float a = std::fabs(sub_mono);
+            if (a > sub_max) sub_max = a;
+        }
 
         /* ── SHIMMER ── */
         const float bellL = 0.5f * (SinNorm(shmrp0) + SinNorm(shmrp1));
@@ -598,6 +617,12 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
         /* Stereo width = 1.0 (static) → width pass-through.            */
         const float shmr_l = shmr_l_pre;
         const float shmr_r = shmr_r_pre;
+        {
+            const float al = std::fabs(shmr_l);
+            const float ar = std::fabs(shmr_r);
+            const float a  = al > ar ? al : ar;
+            if (a > shmr_max) shmr_max = a;
+        }
 
         /* ── SUM, FOG, MASTER ── */
         float bus_l = chord_l + sub_mono + shmr_l;
@@ -651,6 +676,22 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
     shmr_ph_[2] = shmrp2; shmr_ph_[3] = shmrp3;
 
     sub_ph_[0] = subp0; sub_ph_[1] = subp1; sub_ph_[2] = subp2;
+
+    /* ── UI-visible meters.  Per-block envelope follower:
+     *   peak ← max(new, peak * decay)
+     * decay = 0.995 per ~0.5 ms block ⇒ time constant ≈ 100 ms,
+     * −60 dB recovery ≈ 280 ms — classic VU response.               */
+    constexpr float kMeterDecay = 0.995f;
+    const float main_dec = main_peak_ * kMeterDecay;
+    const float sub_dec  = sub_peak_  * kMeterDecay;
+    const float shmr_dec = shmr_peak_ * kMeterDecay;
+    main_peak_  = main_max > main_dec ? main_max : main_dec;
+    sub_peak_   = sub_max  > sub_dec  ? sub_max  : sub_dec;
+    shmr_peak_  = shmr_max > shmr_dec ? shmr_max : shmr_dec;
+
+    /* Live drift LFO phase — first sub-oscillator of the primary
+     * shimmer drift slowLFO.  Wraps in [0, 1).                       */
+    drift_phase_ = shmr_lfo_ph_[0];
 }
 
 } // namespace VoigtpadDsp

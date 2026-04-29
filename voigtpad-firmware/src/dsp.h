@@ -106,6 +106,25 @@ class GasChords
      *  alias.  No audio input is consumed — engine drones. */
     void ProcessBlock(float* out_l, float* out_r, std::size_t n);
 
+    /* ── Read-only metering for the UI ────────────────────────────
+     * Peak-following per-band level meters, updated once per audio
+     * block.  All three include their respective level pot, so the
+     * value is the "audible loudness" of that band roughly in the
+     * 0..1+ range (post-master headroom).  These are written by the
+     * audio thread and read by the UI thread; reads of an aligned
+     * 32-bit float are tear-free on the M7 so plain floats are safe.
+     *
+     * Decay constant is set so a transient takes ≈ 200 ms to drop
+     * by 60 dB — classic VU response.                                */
+    float MainPeak()    const { return main_peak_; }
+    float SubPeak()     const { return sub_peak_;  }
+    float ShimmerPeak() const { return shmr_peak_; }
+
+    /** Phase (0..1) of the primary shimmer-drift LFO, used by the UI
+     *  to draw a "rotating pip" visualisation that is genuinely in
+     *  sync with the audio LFO rather than running its own clock. */
+    float DriftPhase()  const { return drift_phase_; }
+
   private:
     /* ───────── parameter targets (UI-thread side) ───────── */
     float   root_midi_target_     = 36.0f;
@@ -177,6 +196,14 @@ class GasChords
     /* Pink noise generator (Paul Kellet's "economy" filter). */
     float pink_b_[7] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     uint32_t rng_state_ = 0xA5A5A5A5u;
+
+    /* ── UI-visible meters (written by audio thread, read by UI). ─
+     * Plain floats — single-writer / single-reader, aligned 32-bit
+     * accesses are tear-free on the M7.                              */
+    float main_peak_   = 0.0f;
+    float sub_peak_    = 0.0f;
+    float shmr_peak_   = 0.0f;
+    float drift_phase_ = 0.0f;
 
     /* ───────── helpers ───────── */
     void  ComputeFogCoeffs(float cutoff_hz);

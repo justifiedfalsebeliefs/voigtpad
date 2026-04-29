@@ -47,13 +47,35 @@ Output `build/voigtpad-daisy.bin` is the firmware image.
 
 ## Hardware UX
 
-* **B1 (top button)** — cycle pages: Page 1 (purple) ↔ Page 2 (cyan).
+* **B1 (top button)** — cycle pages: Page 1 ↔ Page 2.
 * **B2 (mid button)** — *deferred apply*: while held, pots are tracked
   visually with a breathing animation but parameters are frozen at their
   last applied value. Releasing B2 commits whatever the pots are reading
   at that instant. Lets you scrub a pot to a target without sweeping the
   audio through every value on the way.
 * **B3 (bottom button)** — reserved for future use.
+
+### Pot animations
+
+Each pot has its own animation chosen for the parameter it controls,
+so the panel reads out the engine's internal state at a glance.
+
+| Pot   | Param          | Animation                                                   |
+|-------|----------------|-------------------------------------------------------------|
+| P1P1  | Root pitch     | Filled arc, violet                                           |
+| P1P2  | Shimmer level  | V/U meter, driven by the live shimmer-band peak (green→red) |
+| P1P3  | Detune         | Filled arc, amber                                            |
+| P1P4  | Main level     | V/U meter, driven by the live chord-band peak (green→red)   |
+| P1P5  | Chord          | Discrete bands — each chord type has a mood colour, selected band lit |
+| P1P6  | Sub level      | V/U meter, driven by the live sub-band peak (green→red)     |
+| P2P1  | Shimmer drift  | Single bright pip chasing the engine's drift LFO phase, dim background |
+| P2P2  | Shimmer octave | Vertical thermometer, red→blue ramp, lit up to selected band |
+| P2P3  | Shimmer air    | Sparse white sparkles; spawn rate scales with the parameter |
+| P2P4  | Fog cutoff     | Filled arc, sky-blue                                         |
+| P2P5  | Sub warmth     | Filled arc; colour mixes from off-white to deep red as warmth rises |
+
+Uncaught pots still display the white pip at the *stored* (engine)
+value so pot-catch behaviour is identical to V1.
 
 ## Pot mapping
 
