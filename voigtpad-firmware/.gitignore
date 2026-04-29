@@ -6,3 +6,4 @@ __pycache__
 *.pyc
 tools/web-preset-manager/package-lock.json
 tools/simulator/build/
+*.o
