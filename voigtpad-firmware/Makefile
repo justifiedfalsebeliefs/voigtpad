@@ -10,7 +10,12 @@ TARGET = voigtpad-daisy
 CPP_SOURCES = src/main.cpp src/ws2812.cpp src/leds.cpp src/dsp.cpp src/controller.cpp
 
 # Library Locations
-LIBDAISY_DIR = lib/libDaisy
+LIBDAISY_CANDIDATES := lib/libDaisy ../athanor-firmware/lib/libDaisy
+LIBDAISY_DIR := $(firstword $(foreach dir,$(LIBDAISY_CANDIDATES),$(if $(wildcard $(dir)/core/Makefile),$(dir))))
+
+ifeq ($(LIBDAISY_DIR),)
+$(error Could not find libDaisy. Add submodule at lib/libDaisy or use ../athanor-firmware/lib/libDaisy)
+endif
 
 # Use BOOT_SRAM for Daisy bootloader compatibility.
 # Firmware is flashed to QSPI (0x90040000) and the bootloader copies it to
@@ -21,3 +26,10 @@ APP_TYPE = BOOT_SRAM
 # Core location and generic Makefile
 SYSTEM_FILES_DIR = $(LIBDAISY_DIR)/core
 include $(SYSTEM_FILES_DIR)/Makefile
+
+LIBDAISY_STATIC_LIB := $(LIBDAISY_DIR)/build/libdaisy.a
+
+$(LIBDAISY_STATIC_LIB):
+	$(MAKE) -C $(LIBDAISY_DIR)
+
+$(BUILD_DIR)/$(TARGET).elf: $(LIBDAISY_STATIC_LIB)
