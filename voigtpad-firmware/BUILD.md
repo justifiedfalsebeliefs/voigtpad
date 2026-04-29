@@ -68,11 +68,12 @@ so the panel reads out the engine's internal state at a glance.
 | P1P4  | Main level     | V/U meter, driven by the live chord-band peak (green→red)   |
 | P1P5  | Chord          | Discrete bands — each chord type has a mood colour, selected band lit |
 | P1P6  | Sub level      | V/U meter, driven by the live sub-band peak (green→red)     |
-| P2P1  | Shimmer drift  | Single bright pip chasing the engine's drift LFO phase, dim background |
+| P2P1  | Shimmer drift  | Single pip swinging in lockstep with the live drift LFO value (CW rising / CCW falling), dim background |
 | P2P2  | Shimmer octave | Vertical thermometer, red→blue ramp, lit up to selected band |
 | P2P3  | Shimmer air    | Sparse white sparkles; spawn rate scales with the parameter |
-| P2P4  | Fog cutoff     | Filled arc, sky-blue                                         |
+| P2P4  | Fog cutoff     | Filled arc, sky-blue, driven by the *post-modulation* cutoff so the ring sweeps with the audible filter |
 | P2P5  | Sub warmth     | Filled arc; colour mixes from off-white to deep red as warmth rises |
+| P2P6  | Fog mod depth  | Filled arc, sky-blue                                         |
 
 Uncaught pots still display the white pip at the *stored* (engine)
 value so pot-catch behaviour is identical to V1.
@@ -94,20 +95,22 @@ Chord options (in order): `min`, `maj`, `min7`, `sus2`, `sus4`.
 ### Page 2 (cyan)
 | Pot | Parameter             | Default | Min   | Max  |
 |-----|-----------------------|---------|-------|------|
-| P1  | Shimmer drift rate    | 0.15    | 0.01  | 1.0  |
+| P1  | Shimmer drift rate    | 0.15    | 0.01  | 2.0  |
 | P2  | Shimmer octave (0-4)  | 2       | 0     | 4    |
 | P3  | Shimmer air           | 0.5     | 0     | 1    |
-| P4  | Fog cutoff (Hz)       | 4450    | 200   | 8000 |
+| P4  | Fog cutoff centre (Hz)| 4450    | 200   | 8000 |
 | P5  | Sub warmth            | 0.2     | 0     | 1    |
-| P6  | (unused)              | 0.5     | 0     | 1    |
+| P6  | Fog mod depth         | 0.4     | 0     | 1    |
+
+The fog cutoff is modulated by the shimmer-drift LFO; P6 sets how
+much. At full depth the cutoff sweeps ±60% of the P4 centre value
+at the rate set by P1.
 
 ### Always-on static parameters (not user-exposed)
 * Stereo spread = 1.0
 * Stereo width  = 1.0
 * Sub pulse rate = 0.37 Hz
 * Sub pulse depth = 0.6
-* Fog mod depth = 0.4
-* Fog mod rate  = 0.06 Hz
 
 ## Notes on the Faust patch
 

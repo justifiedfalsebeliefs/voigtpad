@@ -39,8 +39,10 @@ float Controller::ShimmerDriftFromNorm(float v)
 {
     if (v < 0.0f) v = 0.0f;
     if (v > 1.0f) v = 1.0f;
-    /* Linear, matches Faust patch range 0.01 .. 1.0 Hz. */
-    return 0.01f + v * 0.99f;
+    /* Linear, 0.01..2.0 Hz — ceiling doubled vs. the original Faust
+     * patch so the user can dial in faster, more obvious filter
+     * sweeps now that drift also drives the fog cutoff.             */
+    return 0.01f + v * 1.99f;
 }
 
 uint8_t Controller::ShimmerOctaveFromNorm(float v)
@@ -57,6 +59,25 @@ float Controller::FogCutoffFromNorm(float v)
     if (v < 0.0f) v = 0.0f;
     if (v > 1.0f) v = 1.0f;
     return 200.0f + v * 7800.0f;     /* 200..8000 Hz */
+}
+
+float Controller::NormFromFogCutoff(float hz)
+{
+    /* Inverse of FogCutoffFromNorm — used to render the fog ring at
+     * the *final* cutoff (post-shimmer-drift modulation) so what you
+     * see matches what you hear, even when the user-stored centre
+     * value disagrees with the swept value.                          */
+    float n = (hz - 200.0f) / 7800.0f;
+    if (n < 0.0f) n = 0.0f;
+    if (n > 1.0f) n = 1.0f;
+    return n;
+}
+
+float Controller::FogModDepthFromNorm(float v)
+{
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    return v;                        /* 0..1, used directly */
 }
 
 /* Inverse mappers used when seeding defaults so a user-stated default
@@ -96,12 +117,12 @@ void Controller::Init(VoigtpadDsp::GasChords* engine)
     pots_[0][5].stored = 0.50f;                                /* sub level */
 
     /* Page 2 defaults. */
-    pots_[1][0].stored = NormFromRange(0.15f, 0.01f, 1.0f);    /* shmr drift 0.15Hz */
+    pots_[1][0].stored = NormFromRange(0.15f, 0.01f, 2.0f);    /* shmr drift 0.15Hz */
     pots_[1][1].stored = NormFromDiscrete(2, 5);               /* shmr oct = 2 */
     pots_[1][2].stored = 0.50f;                                /* shmr air */
     pots_[1][3].stored = NormFromRange(4450.0f, 200.0f, 8000.0f); /* fog 4450 Hz */
     pots_[1][4].stored = 0.20f;                                /* sub warmth */
-    pots_[1][5].stored = 0.50f;                                /* unused */
+    pots_[1][5].stored = 0.40f;                                /* fog mod depth */
 
     for (uint8_t pg = 0; pg < kNumPages; pg++)
         for (uint8_t p = 0; p < NUM_POTS; p++)
@@ -219,7 +240,7 @@ void Controller::PushParamsToEngine()
     engine_->SetShimmerAir   (                       pg2[2].stored );
     engine_->SetFogCutoff    (FogCutoffFromNorm     (pg2[3].stored));
     engine_->SetSubWarmth    (                       pg2[4].stored );
-    /* pg2[5] reserved. */
+    engine_->SetFogModDepth  (FogModDepthFromNorm   (pg2[5].stored));
 }
 
 /* ── Render ─────────────────────────────────────────────────────── */
@@ -248,10 +269,13 @@ void Controller::PushParamsToEngine()
  *     P3  Shimmer air    → sparse white sparkles, spawn rate scales
  *                          with the parameter (low ≈ a few per second,
  *                          high ≈ continuous shimmer).
- *     P4  Fog cutoff     → arc fill (cyan).
+ *     P4  Fog cutoff     → arc fill (cyan), driven by the *final*
+ *                          post-modulation cutoff so the ring
+ *                          sweeps with the audible filter motion.
  *     P5  Sub warmth     → arc fill, hue mixes white → red as the
  *                          parameter rises.
- *     P6  (reserved)     → faint cyan arc.
+ *     P6  Fog mod depth  → arc fill (cyan) — how much the shimmer
+ *                          drift LFO modulates the fog cutoff.
  *
  * Common UX:
  *   • White pip on the stored value when the pot is uncaught.
@@ -435,7 +459,7 @@ void Controller::DrawOctave(uint8_t pot, uint8_t selected, float k_pot)
     }
 }
 
-void Controller::DrawDriftPip(uint8_t pot, float drift_phase, float k_pot)
+void Controller::DrawDriftPip(uint8_t pot, float drift_value, float k_pot)
 {
     /* Background: very dim full ring so the pot ring is recognisable
      * even when the pip is at an extreme.                            */
@@ -449,19 +473,18 @@ void Controller::DrawDriftPip(uint8_t pot, float drift_phase, float k_pot)
         LedPanel::SetRingByOffset(pot, off, ScaleGlobal(kBg));
     }
 
-    /* The shimmer-drift modulator is a sine, not a sawtooth.  Map
-     * the engine phase (0..1) through sin(2π·phase) ∈ [-1, +1] so the
-     * pip *swings*: clockwise while the LFO value is rising (drift
-     * is sweeping pitch up), counter-clockwise while falling.  Speed
-     * of the swing matches the audible drift rate; direction always
-     * matches the sign of the LFO derivative.                        */
-    if (drift_phase < 0.0f) drift_phase = 0.0f;
-    if (drift_phase >= 1.0f) drift_phase -= std::floor(drift_phase);
+    /* `drift_value` is the *exact* shimmer-drift LFO output the audio
+     * engine is using right now (and which now also modulates the
+     * fog cutoff), in [-1, +1].  Map it linearly onto the arc:
+     *   • LFO rising (value getting larger)  ⇒ pip sweeps CW
+     *   • LFO falling (value getting smaller) ⇒ pip sweeps CCW
+     * No additional sine/phase math here — keeping the mapping
+     * monotonic in the LFO's own value guarantees the pip motion
+     * tracks the audio exactly in both rate *and* direction.       */
+    if (drift_value < -1.0f) drift_value = -1.0f;
+    if (drift_value >  1.0f) drift_value =  1.0f;
 
-    const float    s        = std::sin(6.2831853f * drift_phase);
-    /* Map [-1, +1] to position [0, kArcLeds-1] — centre rest at the
-     * middle LED, full deflection reaches the ends symmetrically.  */
-    const float    center_f = (s * 0.5f + 0.5f)
+    const float    center_f = (drift_value * 0.5f + 0.5f)
                              * static_cast<float>(kArcLeds - 1);
     const int      center_i = static_cast<int>(std::floor(center_f));
     const float    frac     = center_f - static_cast<float>(center_i);
@@ -671,7 +694,7 @@ void Controller::Render(uint32_t t_ms,
             switch (p)
             {
                 case 0: DrawDriftPip(p,
-                            engine_ ? engine_->DriftPhase() : 0.0f,
+                            engine_ ? engine_->DriftValue() : 0.0f,
                             k_pot);                                        break;
                 case 1: DrawOctave(p,
                             static_cast<uint8_t>(std::min<int>(
@@ -680,8 +703,12 @@ void Controller::Render(uint32_t t_ms,
                                     * kPage2Discrete.num_options))),
                             k_pot);                                        break;
                 case 2: DrawSparkle(p, s.stored, dt_ms, k_pot);            break;
-                case 3: DrawArc(p, s.stored, kP2FogCol, k_pot);            break;
+                case 3: DrawArc(p,
+                            engine_ ? NormFromFogCutoff(engine_->FogCutoffOut())
+                                    : s.stored,
+                            kP2FogCol, k_pot);                             break;
                 case 4: DrawWarmthArc(p, s.stored, k_pot);                 break;
+                case 5: DrawArc(p, s.stored, kP2FogCol, k_pot);            break;
                 default: DrawArc(p, s.stored, pgcol, k_pot * 0.4f);        break;
             }
         }

@@ -265,8 +265,6 @@ void GasChords::Init()
     /* Stagger LFO phases so we don't get all-coherent peaks at boot. */
     for (int i = 0; i < 10; i++)
         shmr_lfo_ph_[i] = static_cast<float>(i) * 0.1f;
-    fog_lfo_ph_[0] = 0.0f;
-    fog_lfo_ph_[1] = 0.5f;
     sub_lfo_ph_    = 0.0f;
 
     /* Stagger chord-voice saw phases for a fuller stack at startup. */
@@ -330,7 +328,7 @@ void GasChords::SetSubLevel(float v)
 void GasChords::SetShimmerDrift(float hz)
 {
     if (hz < 0.01f) hz = 0.01f;
-    if (hz > 1.0f) hz = 1.0f;
+    if (hz > 2.0f)  hz = 2.0f;
     shmr_drift_target_ = hz;
 }
 void GasChords::SetShimmerOctave(uint8_t oct)
@@ -355,6 +353,12 @@ void GasChords::SetSubWarmth(float v)
     if (v < 0.0f) v = 0.0f;
     if (v > 1.0f) v = 1.0f;
     sub_warmth_target_ = v;
+}
+void GasChords::SetFogModDepth(float v)
+{
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    fog_mod_depth_target_ = v;
 }
 
 /* Recompute the fog biquad + 1-pole coefficients from a target cutoff. */
@@ -386,6 +390,7 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
     const float shmr_air_t    = shmr_air_target_;
     const float fog_cutoff_t  = fog_cutoff_target_;
     const float sub_warmth_t  = sub_warmth_target_;
+    const float fog_mod_depth_t = fog_mod_depth_target_;
 
     /* Discrete params jump on block boundaries. */
     chord_idx_   = chord_idx_target_;
@@ -409,11 +414,15 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
     const float breath = 0.5f
         + 0.5f * SlowLfoTick(&shmr_lfo_ph_[8], shmr_drift_ * 0.31f);
 
-    const float fog_lfo_val = 0.5f
-        + 0.5f * SlowLfoTick(&fog_lfo_ph_[0], kFogModRate);
-    /* fogF = fogCutoff * (1 - fogMod*0.6 + fogMod*1.2*fogLFO) */
-    float fog_f = fog_cutoff_
-        * (1.0f - kFogModDepth * 0.6f + kFogModDepth * 1.2f * fog_lfo_val);
+    /* Fog cutoff is modulated by the *primary* shimmer-drift LFO
+     * (drift_lfo[0] ∈ [-1, +1]) scaled by the user-set depth.  At
+     * full depth the cutoff sweeps ±60% around the user's centre
+     * frequency; at zero depth the filter is static.  Using the
+     * same LFO that drives shimmer detune means the audible
+     * filter sweep is locked to the shimmer wobble, and the UI
+     * pip on the drift pot is guaranteed to track both.            */
+    const float fog_mod = drift_lfo[0] * fog_mod_depth_ * 0.6f;
+    float fog_f = fog_cutoff_ * (1.0f + fog_mod);
     if (fog_f < 60.0f)               fog_f = 60.0f;
     if (fog_f > kSampleRate / 2.2f)  fog_f = kSampleRate / 2.2f;
     ComputeFogCoeffs(fog_f);
@@ -449,6 +458,7 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
     float shmr_air   = shmr_air_;
     float fog_cutoff = fog_cutoff_;
     float sub_warmth = sub_warmth_;
+    float fog_mod_depth = fog_mod_depth_;
     float sub_lfo_ph = sub_lfo_ph_;
 
     /* ── Pitch → phase-increment conversion happens once per block.
@@ -525,6 +535,7 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
         shmr_air   += (shmr_air_t   - shmr_air)   * kSmoothFast;
         fog_cutoff += (fog_cutoff_t - fog_cutoff) * kSmoothFast;
         sub_warmth += (sub_warmth_t - sub_warmth) * kSmoothFast;
+        fog_mod_depth += (fog_mod_depth_t - fog_mod_depth) * kSmoothFast;
 
         /* ── CHORD ──
          * Phase increments resolved at block start (above) so the
@@ -665,6 +676,7 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
     shmr_air_   = shmr_air;
     fog_cutoff_ = fog_cutoff;
     sub_warmth_ = sub_warmth;
+    fog_mod_depth_ = fog_mod_depth;
     sub_lfo_ph_ = sub_lfo_ph;
 
     chord_voice_[0].ph[0] = v0p0; chord_voice_[0].ph[1] = v0p1; chord_voice_[0].ph[2] = v0p2;
@@ -689,9 +701,12 @@ void GasChords::ProcessBlock(float* out_l, float* out_r, std::size_t n)
     sub_peak_   = sub_max  > sub_dec  ? sub_max  : sub_dec;
     shmr_peak_  = shmr_max > shmr_dec ? shmr_max : shmr_dec;
 
-    /* Live drift LFO phase — first sub-oscillator of the primary
-     * shimmer drift slowLFO.  Wraps in [0, 1).                       */
-    drift_phase_ = shmr_lfo_ph_[0];
+    /* Live drift LFO output and post-modulation fog cutoff — these
+     * are the *exact* values the audio block just used, so the UI can
+     * render pip position and fog ring fill in lockstep with the
+     * audible motion (no separate UI-side clock).                    */
+    drift_value_     = drift_lfo[0];
+    fog_cutoff_out_  = fog_f;
 }
 
 } // namespace VoigtpadDsp

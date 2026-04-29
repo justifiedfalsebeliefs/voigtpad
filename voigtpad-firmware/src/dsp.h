@@ -55,8 +55,10 @@ constexpr float kStereoSpread  = 1.0f;
 constexpr float kStereoWidth   = 1.0f;
 constexpr float kSubPulseRate  = 0.37f;   /* Hz */
 constexpr float kSubPulseDepth = 0.60f;
-constexpr float kFogModDepth   = 0.40f;
-constexpr float kFogModRate    = 0.06f;   /* Hz */
+/* Fog cutoff is now modulated by the *shimmer drift* LFO (so the
+ * filter sweep is locked to the audible drift), with depth set by
+ * the user via `SetFogModDepth()`.  The legacy fixed-rate fog LFO
+ * has been retired.                                                 */
 
 /* ── Chord taxonomy (5 options as per spec) ──────────────────────── */
 /*
@@ -96,11 +98,15 @@ class GasChords
     void SetSubLevel(float v);                   /* 0..1   */
 
     /* ── Page-2 setters ─────────────────────────────────────────── */
-    void SetShimmerDrift(float hz);              /* 0.01..1.0 */
+    void SetShimmerDrift(float hz);              /* 0.01..2.0 */
     void SetShimmerOctave(uint8_t oct);          /* 0..4 (octaves above root) */
     void SetShimmerAir(float v);                 /* 0..1 */
     void SetFogCutoff(float hz);                 /* 200..8000 */
     void SetSubWarmth(float v);                  /* 0..1 */
+    /** How strongly the shimmer-drift LFO modulates the fog cutoff
+     *  around the user-set centre (0 = no modulation, 1 = full sweep
+     *  ±60% of the centre frequency).                              */
+    void SetFogModDepth(float v);                /* 0..1   */
 
     /** Render one block of stereo samples. `out_l` and `out_r` may
      *  alias.  No audio input is consumed — engine drones. */
@@ -120,10 +126,18 @@ class GasChords
     float SubPeak()     const { return sub_peak_;  }
     float ShimmerPeak() const { return shmr_peak_; }
 
-    /** Phase (0..1) of the primary shimmer-drift LFO, used by the UI
-     *  to draw a "rotating pip" visualisation that is genuinely in
-     *  sync with the audio LFO rather than running its own clock. */
-    float DriftPhase()  const { return drift_phase_; }
+    /** Latest output of the primary shimmer-drift LFO, in [-1, +1].
+     *  This is the *exact* value the audio engine uses to detune the
+     *  shimmer voices and (since it now also drives the fog filter)
+     *  to modulate the fog cutoff — so the UI pip is guaranteed to
+     *  swing in lockstep with what you're hearing.                   */
+    float DriftValue()  const { return drift_value_; }
+
+    /** Final fog-filter cutoff in Hz after slewing *and* shimmer-drift
+     *  modulation — i.e. the actual frequency the IIR is configured
+     *  for on the most recent audio block.  The UI uses this to draw
+     *  the fog ring so the visualisation matches the heard sweep. */
+    float FogCutoffOut() const { return fog_cutoff_out_; }
 
   private:
     /* ───────── parameter targets (UI-thread side) ───────── */
@@ -138,6 +152,7 @@ class GasChords
     float   shmr_air_target_      = 0.50f;
     float   fog_cutoff_target_    = 4450.0f;
     float   sub_warmth_target_    = 0.20f;
+    float   fog_mod_depth_target_ = 0.40f;
 
     /* ───────── audio-rate smoothed parameters ───────── */
     float   root_midi_   = 36.0f;
@@ -151,6 +166,7 @@ class GasChords
     float   shmr_air_    = 0.50f;
     float   fog_cutoff_  = 4450.0f;
     float   sub_warmth_  = 0.20f;
+    float   fog_mod_depth_ = 0.40f;
 
     /* ───────── oscillator phases (radian-free, 0..1 normalised) ───
      * Audio-rate sine/saw oscillators are run from a 0..1 phase
@@ -169,8 +185,10 @@ class GasChords
      * and we have 5 slow-LFOs (4 drift + 1 breath) → 10 phases. */
     float shmr_lfo_ph_[10] = {0.0f};
 
-    /* Fog cutoff slowLFO phases (1 slowLFO, 2 sub-oscillators). */
-    float fog_lfo_ph_[2] = {0.0f, 0.0f};
+    /* Fog cutoff is now modulated by the primary shimmer-drift LFO
+     * (the same `slowLFO` whose first sub-oscillator phase pair lives
+     * at `shmr_lfo_ph_[0..1]`), so no dedicated fog-LFO state is
+     * needed.                                                        */
 
     /* ───────── filters ───────── */
 
@@ -203,7 +221,10 @@ class GasChords
     float main_peak_   = 0.0f;
     float sub_peak_    = 0.0f;
     float shmr_peak_   = 0.0f;
-    float drift_phase_ = 0.0f;
+    /* Latest drift LFO output (−1..+1) and post-modulation fog
+     * cutoff in Hz, both written at the end of every audio block.   */
+    float drift_value_   = 0.0f;
+    float fog_cutoff_out_ = 4450.0f;
 
     /* ───────── helpers ───────── */
     void  ComputeFogCoeffs(float cutoff_hz);

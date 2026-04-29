@@ -142,7 +142,7 @@ class Controller
     void DrawVu         (uint8_t pot, float level, float k_pot);
     void DrawChord      (uint8_t pot, uint8_t selected, float k_pot);
     void DrawOctave     (uint8_t pot, uint8_t selected, float k_pot);
-    void DrawDriftPip   (uint8_t pot, float drift_phase, float k_pot);
+    void DrawDriftPip   (uint8_t pot, float drift_value, float k_pot);
     void DrawSparkle    (uint8_t pot, float air_param,
                          uint32_t dt_ms, float k_pot);
 
@@ -155,6 +155,8 @@ class Controller
     static float ShimmerDriftFromNorm(float v);
     static uint8_t ShimmerOctaveFromNorm(float v);
     static float FogCutoffFromNorm(float v);
+    static float NormFromFogCutoff(float hz);
+    static float FogModDepthFromNorm(float v);
 };
 
 } // namespace VoigtpadUi
