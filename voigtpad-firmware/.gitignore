@@ -1,0 +1,8 @@
+build
+mx.scratch
+!.settings
+.DS_Store
+__pycache__
+*.pyc
+tools/web-preset-manager/package-lock.json
+tools/simulator/build/
